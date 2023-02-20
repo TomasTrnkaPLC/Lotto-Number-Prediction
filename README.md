@@ -1,7 +1,7 @@
 # Lotto Numbers Predictor
 
 ### Overview
-This repository contains a lotto numbers predictor implemented using machine learning techniques. Given sufficient publicly available data, this predictor can help remove the element of chance and provide a machine learning-based forecast of upcoming lottery numbers. The goal of this implementation is to predict upcoming lottery numbers by leveraging publicly available data and using machine learning algorithms.
+This repository contains a lotto numbers predictor implemented using machine learning techniques. Given sufficient publicly available data, this predictor can help remove the element of chance and provide a machine learning-based forecast of upcoming lottery numbers. 
 
 While this project is for educational purposes only, it can be an enjoyable way to experiment with machine learning and neural networks while also learning about prediction methods.
 
