@@ -11,11 +11,50 @@ from tensorflow.keras.layers import SpatialDropout1D, Lambda, Bidirectional, con
 from tensorflow.keras.layers import Attention
 from tensorflow.keras import callbacks
 from tensorflow.keras import backend
+from tensorflow.keras.callbacks import EarlyStopping
 import matplotlib.pyplot as plt
 import logging
+# Class for Early Stopping
+class EarlyStoppingCallback:
+    def __init__(self, monitor='val_loss', patience=5):
+        self.early_stopping = EarlyStopping(monitor=monitor, patience=patience)
 
+    def on_train_begin(self, logs=None):
+        self.best_val_loss = float('inf')
+
+    def on_epoch_end(self, epoch, logs=None):
+        current_val_loss = logs.get('val_loss')
+        if current_val_loss < self.best_val_loss:
+            self.best_val_loss = current_val_loss
+        if self.early_stopping.on_epoch_end(epoch=epoch, logs=logs):
+            print('Early stopping due to no improvement on validation loss.')
+            self.model.stop_training = True
+# Class for Cosine Annealing Scheduler
+class CosineAnnealingScheduler(callbacks.Callback):
+        """Cosine annealing scheduler.
+        """
+        def __init__(self, T_max, eta_max, eta_min = 0, verbose = 0):
+            super(CosineAnnealingScheduler, self).__init__()
+            self.T_max = T_max
+            self.eta_max = eta_max
+            self.eta_min = eta_min
+            self.verbose = verbose
+
+        def on_epoch_begin(self, epoch, logs = None):
+            if not hasattr(self.model.optimizer, 'lr'):
+                raise ValueError('Optimizer must have a "lr" attribute.')
+            lr = self.eta_min + (self.eta_max - self.eta_min) * (1 + math.cos(math.pi * epoch / self.T_max)) / 2
+            backend.set_value(self.model.optimizer.lr, lr)
+            if self.verbose > 0:
+                print('\nEpoch %05d: CosineAnnealingScheduler setting learning '
+                    'rate to %s.' % (epoch + 1, lr))
+            
+        def on_epoch_end(self, epoch, logs = None):
+            logs = logs or {}
+            logs['lr'] = backend.get_value(self.model.optimizer.lr)
+            
 AUTO = tf.data.experimental.AUTOTUNE
-version = '0.0.2'
+version = '0.0.3'
 #For logging purposes
 output_path = os.path.dirname(os.path.abspath(__file__))
 time_now = datetime.now()
@@ -73,23 +112,23 @@ if XLA_ACCELERATE:
     print('Accelerated Linear Algebra enabled')
     logging.warning('Accelerated Linear Algebra enabled')
     
-print('Welcome to Lotto Number Predictor 0.1 by @tomastrnkaplc')
-print('System Patch: '+output_path)  
+print('Welcome to Lotto Number Predictor ',version,' by @tomastrnkaplc')
+print('System Patch: ',output_path)  
 # Load data    
 lotto = pd.read_csv(output_path+'/data.csv', index_col = 'Datum')
 #options for data compare if you already know data and you want to know if they match
 # from the last draw. It is not necessary to use it. It is only for a more accurate verification of the prediction model against reality
-data_compare_array_set = [4,8,26,27,28,32,33]
+data_compare_array_set = [3,4,12,15,16,32,33]
 data = lotto.values - 1
 # how many percet is data for training/test
 train = data[:-50]
 test = data[-50:]
 EPOCHS = 2000
-BATCH_SIZE = 50 #500 CPU 2000+ Based on RAM and hidden_nerons
+BATCH_SIZE = 100 #500 CPU 2000+ Based on RAM and hidden_nerons
 LR_MAX = 0.0001
 LR_MIN = 0.00001
 # Category embedding dimension
-embed_dim_value = 944
+embed_dim_value = 200
 #Density of the category embedding dimension
 dense_value = 500
 #dimension continuous-number vector for each number
@@ -107,17 +146,6 @@ bidirectional = True
 optimizer_selected = 'adam'
 # Loose sparse_categorical_crossentropy ,  mse
 loose_selected = 'sparse_categorical_crossentropy'
-# Save Parameter
-logging.warning('Model Parameter set')
-logging.warning('EPOCHS %s', EPOCHS)
-logging.warning('BATCH_SIZE %s', BATCH_SIZE)
-logging.warning('LR_MAX %s', LR_MAX)
-logging.warning('LR_MIN %s', LR_MIN)
-logging.warning('Category embedding dimension %s', embed_dim_value)
-logging.warning('Dropout rate %s', dropout_rate)
-logging.warning('Hidden_neurons %s', hidden_neurons)
-logging.warning('Optimizer %s', optimizer_selected)
-logging.warning('Loose %s', loose_selected)
 #By setting verbose 0, 1 or 2 you just say how do you want to 'see' the training progress for each
 varbose_param = 1
 # how many loops to predict
@@ -136,43 +164,12 @@ for i in range(w, inputs.shape[0]):
 X_test = np.array(X_test)
 y_test = test
 
-logging.warning('Data shape %s', data.shape)
-logging.warning('X_train shape %s', X_train.shape)
-logging.warning('y_train shape %s', y_train.shape)
-logging.warning('X_test shape %s', X_test.shape)
-logging.warning('y_test shape %s', y_test.shape)
-
 # Create layers
 with strategy.scope():   
     inp0 = Input(shape = (w, X_train.shape[2]))
-    inp1 = Lambda(lambda x: x[:, :, 0])(inp0)
-    inp1 = Embedding(embed_dim_value, embed_dim)(inp1)
-    inp1 = SpatialDropout1D(spatial_dropout_rate)(inp1)
-    
-    inp2 = Lambda(lambda x: x[:, :, 1])(inp0)
-    inp2 = Embedding(embed_dim_value, embed_dim)(inp2)
-    inp2 = SpatialDropout1D(spatial_dropout_rate)(inp2)
-    
-    inp3 = Lambda(lambda x: x[:, :, 2])(inp0)
-    inp3 = Embedding(embed_dim_value, embed_dim)(inp3)
-    inp3 = SpatialDropout1D(spatial_dropout_rate)(inp3)
-    
-    inp4 = Lambda(lambda x: x[:, :, 3])(inp0)
-    inp4 = Embedding(embed_dim_value, embed_dim)(inp4)
-    inp4 = SpatialDropout1D(spatial_dropout_rate)(inp4)
-    
-    inp5 = Lambda(lambda x: x[:, :, 4])(inp0)
-    inp5 = Embedding(embed_dim_value, embed_dim)(inp5)
-    inp5 = SpatialDropout1D(spatial_dropout_rate)(inp5)    
-    
-    inp6 = Lambda(lambda x: x[:, :, 5])(inp0)
-    inp6 = Embedding(embed_dim_value, embed_dim)(inp6)
-    inp6 = SpatialDropout1D(spatial_dropout_rate)(inp6)
-    
-    inp7 = Lambda(lambda x: x[:, :, 6])(inp0)
-    inp7 = Embedding(embed_dim_value, embed_dim)(inp7)
-    inp7 = SpatialDropout1D(spatial_dropout_rate)(inp7)    
-    inp = Concatenate()([inp1, inp2, inp3, inp4, inp5, inp6, inp7])
+    inp = [Embedding(embed_dim_value, embed_dim)(Lambda(lambda x: x[:, :, i])(inp0)) for i in range(X_train.shape[2])]
+    inp = [SpatialDropout1D(spatial_dropout_rate)(inp[i]) for i in range(X_train.shape[2])]
+    inp = Concatenate()(inp)
     
     # Seq2Seq model with attention or bidirectional encoder    
     num_layers = len(hidden_neurons)    
@@ -214,40 +211,18 @@ with strategy.scope():
     context = Attention(dropout = dropout_rate)([decoder, sh_list[-1]])
     decoder = concatenate([context, decoder])
     out = Dense(dense_value, activation = 'softmax')(decoder)
-    model = Model(inputs = inp0, outputs = out)    
-    # Class for Cosine Annealing Scheduler
-    class CosineAnnealingScheduler(callbacks.Callback):
-        """Cosine annealing scheduler.
-        """
-        def __init__(self, T_max, eta_max, eta_min = 0, verbose = 0):
-            super(CosineAnnealingScheduler, self).__init__()
-            self.T_max = T_max
-            self.eta_max = eta_max
-            self.eta_min = eta_min
-            self.verbose = verbose
+    model = Model(inputs = inp0, outputs = out) 
 
-        def on_epoch_begin(self, epoch, logs = None):
-            if not hasattr(self.model.optimizer, 'lr'):
-                raise ValueError('Optimizer must have a "lr" attribute.')
-            lr = self.eta_min + (self.eta_max - self.eta_min) * (1 + math.cos(math.pi * epoch / self.T_max)) / 2
-            backend.set_value(self.model.optimizer.lr, lr)
-            if self.verbose > 0:
-                print('\nEpoch %05d: CosineAnnealingScheduler setting learning '
-                    'rate to %s.' % (epoch + 1, lr))
-            
-        def on_epoch_end(self, epoch, logs = None):
-            logs = logs or {}
-            logs['lr'] = backend.get_value(self.model.optimizer.lr)
-            
     cas = CosineAnnealingScheduler(EPOCHS, LR_MAX, LR_MIN)
     # This help you to save only the best model. It may happen that the result oscillates and therefore the last model does not have the best parameters. This helps to save the best result
     ckp = callbacks.ModelCheckpoint('best_model.hdf5', monitor = 'val_sparse_top_k', verbose = 0, 
                                 save_best_only = True, save_weights_only = False, mode = 'max')
+    early_stop = EarlyStopping(monitor='val_loss', patience=100, verbose=1)
     sparse_top_k = tf.keras.metrics.SparseTopKCategoricalAccuracy(k = 5, name = 'sparse_top_k')
     model.compile(optimizer = optimizer_selected, loss = loose_selected, metrics = [sparse_top_k]) 
     history = model.fit(X_train, y_train, 
                     validation_data = (X_test, y_test), 
-                    callbacks = [ckp, cas],
+                    callbacks = [ckp, cas, early_stop],
                     epochs = EPOCHS, 
                     batch_size = BATCH_SIZE, 
                     verbose = varbose_param) 
@@ -261,12 +236,12 @@ plt.semilogy(hist['sparse_top_k'], '-r', label = 'Training')
 plt.semilogy(hist['val_sparse_top_k'], '-b', label = 'Validation')
 plt.ylabel('Sparse Top K Accuracy', fontsize = 14)
 max_sparse_top_k = max(hist['sparse_top_k'])
-yticks = [10**i for i in range(int(np.log10(1)), int(np.log10(max_sparse_top_k))+1)]
+yticks = [1000**i for i in range(int(np.log10(1)), int(np.log10(max_sparse_top_k))+1)]
 plt.yticks(yticks)
 plt.xlabel('Epochs', fontsize = 14)
 plt.legend(fontsize = 14)
 plt.grid()
-plt.savefig('Result.png')
+plt.savefig('Result'+time_now+'.png')
 plt.show()
 
 # Model summary and end 
@@ -332,3 +307,20 @@ for seq in result:
    except Exception as e:
       print(e)
       logging.warning(e)
+      
+# Save Parameter
+logging.warning('Model Parameter set')
+logging.warning('EPOCHS %s', EPOCHS)
+logging.warning('BATCH_SIZE %s', BATCH_SIZE)
+logging.warning('LR_MAX %s', LR_MAX)
+logging.warning('LR_MIN %s', LR_MIN)
+logging.warning('Category embedding dimension %s', embed_dim_value)
+logging.warning('Dropout rate %s', dropout_rate)
+logging.warning('Hidden_neurons %s', hidden_neurons)
+logging.warning('Optimizer %s', optimizer_selected)
+logging.warning('Loose %s', loose_selected)      
+logging.warning('Data shape %s', data.shape)
+logging.warning('X_train shape %s', X_train.shape)
+logging.warning('y_train shape %s', y_train.shape)
+logging.warning('X_test shape %s', X_test.shape)
+logging.warning('y_test shape %s', y_test.shape)
