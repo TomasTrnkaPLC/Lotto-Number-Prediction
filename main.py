@@ -14,16 +14,16 @@ from tensorflow.keras import backend
 from tensorflow.keras.callbacks import EarlyStopping
 import matplotlib.pyplot as plt
 import logging
-
+import csv
 
 # Variables
 #options for data compare if you already know data and you want to know if they match
 # from the last draw. It is not necessary to use it. It is only for a more accurate verification of the prediction model against reality
-data_compare_array_set = [29,31,19,32,6,1,8]
-EPOCHS = 2000
+data_compare_array_set = [17,39,22,46,6]
+EPOCHS = 20000
 BATCH_SIZE = 100 #500 CPU 2000+ Based on RAM and hidden_nerons
 LR_MAX = 0.0001
-LR_MIN = 0.00001
+LR_MIN = 0.000001
 # Category embedding dimension
 embed_dim_value = 200
 #Density of the category embedding dimension
@@ -33,10 +33,10 @@ embed_dim = (embed_dim_value // 2) + 1
 dropout_rate = 0.2
 spatial_dropout_rate = 0.2
 w = 5
-steps_after = 7
+steps_after = 5
 feature_count = embed_dim * 5
 # How many neurons in each layer of the LSTM
-hidden_neurons = [128,64] # [128,64], [64,32], [32,16] 
+hidden_neurons = [64,32] # [128,64], [64,32], [32,16] 
 # On/Off Bidirectional LSTM
 bidirectional = True 
 # sgd or adam
@@ -102,9 +102,11 @@ current_time_day = str(current_time_day)
 current_time = time_now.strftime("%H_%M_%S")
 current_time = str(current_time) 
 logging_file_string = 'Lotto_Number_Predictor_'+current_time_day+'.log'
+csv_file_string = 'Lotto_Number_Predictor_'+current_time_day+'.csv'
 logging_file = os.path.join('C:\Temp'+logging_file_string) 
 filepath = os.path.join('C:\Temp', logging_file_string)
-
+if (os.path.exists(csv_file_string) == False):
+    f = open(csv_file_string, "w")
 try:
     if not os.path.exists('C:\Temp'):
         os.makedirs('C:\Temp')        
@@ -155,8 +157,33 @@ if XLA_ACCELERATE:
 print('Welcome to Lotto Number Predictor ',version,' by @tomastrnkaplc')
 print('System Patch: ',output_path)  
 
+# beam search
+def beam_search_decoder(data, k, replace = True):
+        sequences = [[list(), 0.0]]
+        # walk over each step in sequence
+        for row in data:
+            all_candidates = list()
+            # expand each current candidate
+            for i in range(len(sequences)):
+                seq, score = sequences[i]
+                best_k = np.argsort(row)[-k:]
+                for j in best_k:
+                    candidate = [seq + [j], score + math.log(row[j])]
+                    if replace:
+                        all_candidates.append(candidate)
+                    elif (replace == False) and (len(set(candidate[0])) == len(candidate[0])):
+                        all_candidates.append(candidate)
+            # order all candidates by score
+            ordered = sorted(all_candidates, key = lambda tup:tup[1], reverse = True)
+            # select k best
+            sequences = ordered[:k]
+        return sequences
 
 def predict_loop():
+   try:
+    file = open(csv_file_string, mode='a', newline='')
+    writer = csv.writer(file)
+
     time_now = datetime.now()
     current_time_day = time_now.strftime("%d_%m_%Y")
     current_time_day = str(current_time_day) 
@@ -233,10 +260,10 @@ def predict_loop():
 
         cas = CosineAnnealingScheduler(EPOCHS, LR_MAX, LR_MIN)
         # This help you to save only the best model. It may happen that the result oscillates and therefore the last model does not have the best parameters. This helps to save the best result
-        ckp = callbacks.ModelCheckpoint('best_model.hdf5', monitor = 'val_sparse_top_k', verbose = 0, 
+        ckp = callbacks.ModelCheckpoint('best_model.hdf5', monitor = 'val_sparse_top_k', verbose = 1, 
                                     save_best_only = True, save_weights_only = False, mode = 'max')
         early_stop = EarlyStopping(monitor='val_loss', patience=patience_param, verbose=1)
-        sparse_top_k = tf.keras.metrics.SparseTopKCategoricalAccuracy(k = 5, name = 'sparse_top_k')
+        sparse_top_k = tf.keras.metrics.SparseTopKCategoricalAccuracy(k = 1, name = 'sparse_top_k')
         model.compile(optimizer = optimizer_selected, loss = loose_selected, metrics = [sparse_top_k]) 
         history = model.fit(X_train, y_train, 
                         validation_data = (X_test, y_test), 
@@ -244,25 +271,6 @@ def predict_loop():
                         epochs = EPOCHS, 
                         batch_size = BATCH_SIZE, 
                         verbose = varbose_param) 
-        hist = pd.DataFrame(history.history)        
-        
-    #Show Graphs
-    print(hist['val_sparse_top_k'].max())
-    print(hist['val_sparse_top_k'].max())
-    plt.figure(figsize = (8, 6))
-    plt.semilogy(hist['sparse_top_k'], '-r', label = 'Training')
-    plt.semilogy(hist['val_sparse_top_k'], '-b', label = 'Validation')
-    plt.ylabel('Sparse Top K Accuracy', fontsize = 14)
-    max_sparse_top_k = max(hist['sparse_top_k'])
-    yticks = [1000**i for i in range(int(np.log10(1)), int(np.log10(max_sparse_top_k))+1)]
-    plt.yticks(yticks)
-    plt.xlabel('Epochs', fontsize = 14)
-    plt.legend(fontsize = 14)
-    plt.grid()
-    plt.savefig('Result'+current_time_day+'_'+current_time+'.png')
-    plt.show(block=False)
-    plt.pause(2)
-    plt.close()
 
     # Model summary and end 
     model.summary() 
@@ -271,31 +279,9 @@ def predict_loop():
     pred = model.predict(X_test)
     pred = np.argmax(pred, axis = 2)
     X_latest = X_test[-1][1:]
-    X_latest = np.concatenate([X_latest, y_test[-1].reshape(1, 7)], axis = 0)
+    X_latest = np.concatenate([X_latest, y_test[-1].reshape(1, 5)], axis = 0)
     X_latest = X_latest.reshape(1, X_latest.shape[0], X_latest.shape[1])
-
-    # beam search
-    def beam_search_decoder(data, k, replace = True):
-        sequences = [[list(), 0.0]]
-        # walk over each step in sequence
-        for row in data:
-            all_candidates = list()
-            # expand each current candidate
-            for i in range(len(sequences)):
-                seq, score = sequences[i]
-                best_k = np.argsort(row)[-k:]
-                for j in best_k:
-                    candidate = [seq + [j], score + math.log(row[j])]
-                    if replace:
-                        all_candidates.append(candidate)
-                    elif (replace == False) and (len(set(candidate[0])) == len(candidate[0])):
-                        all_candidates.append(candidate)
-            # order all candidates by score
-            ordered = sorted(all_candidates, key = lambda tup:tup[1], reverse = True)
-            # select k best
-            sequences = ordered[:k]
-        return sequences
-
+   
     pred_latest = model.predict(X_latest)
     pred_latest = np.squeeze(pred_latest)
     replace = False
@@ -314,7 +300,7 @@ def predict_loop():
         try:
             #This is only to verify the prediction if we already know the numbers in advance. It helps to quickly validate the accuracy of the prediction against real numbers. 
             comparation_result = set(data_compare_array_set) & set(np.array(seq[0]) + 1)
-            percentages = len(comparation_result)/7 *100
+            percentages = len(comparation_result)/5 *100
             percentages = round(percentages, 2)
             percentages_str = str(percentages)
             comparation_result = ' '.join(str(x) for x in comparation_result)
@@ -329,7 +315,13 @@ def predict_loop():
             print(e)
             logging.warning(e)
     file.close()
-            
+   except Exception as e:
+      # Save Parameter
+    logging.warning('----Calulation error')   
+    logging.warning('----Dropout rate %s', dropout_rate)
+    logging.warning('----Hidden_neurons %s', hidden_neurons)
+    logging.warning('----Category embedding dimension %s', embed_dim_value)
+    logging.warning('----Error %s', e)
 # Save Parameter
 logging.warning('Model Parameter set')
 logging.warning('EPOCHS %s', EPOCHS)
@@ -341,5 +333,55 @@ logging.warning('Dropout rate %s', dropout_rate)
 logging.warning('Hidden_neurons %s', hidden_neurons)
 logging.warning('Optimizer %s', optimizer_selected)
 logging.warning('Loose %s', loose_selected)      
+logging.warning('Patience %s', patience_param)
 # For CSV loggin
-predict_loop()
+
+loop = 1    
+run = 1
+while 1:
+   logging.warning('Run number %s', run)
+   logging.warning('Embedding dimension %s', embed_dim_value)
+   logging.warning('Density %s', dense_value)
+   logging.warning('Hidden_neurons %s', hidden_neurons)
+   print('Run number', run)
+   if embed_dim_value < 1000:
+    embed_dim_value = embed_dim_value + 100
+   else:
+     embed_dim_value = 200
+     if dense_value < 1000:
+         dense_value = dense_value + 100
+     else:
+         if loop == 1:
+             hidden_neurons = [128,64] # [128,64], [64,32], [32,16] 
+             loop = 2 
+             dense_value = 200
+             embed_dim_value = 200
+             
+         elif loop == 2:
+             hidden_neurons = [256,158] # [128,64], [64,32], [32,16] 
+             loop = 3 
+             dense_value = 200
+             embed_dim_value = 200    
+         elif loop == 3:
+             hidden_neurons = [512,256] # [128,64], [64,32], [32,16] 
+             loop = 4 
+             dense_value = 200
+             embed_dim_value = 200        
+         else:    
+            print('End of the prediction')
+            logging.warning('End of the prediction')
+            break    
+   predict_loop()
+   run = run +1
+# Close the file
+
+# Načítanie dát zo súboru csv
+with open(csv_file_string) as csvfile:
+    reader = csv.reader(csvfile)
+    data = [row for row in reader]
+
+data.sort(key=lambda x: x[-1], reverse=True)
+print('Run', 'Result %')
+for row in data:
+    if float(row[-1]) >= minimal_limit:
+        print(row[0], row[-1])
